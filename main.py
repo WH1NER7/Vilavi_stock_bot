@@ -122,7 +122,7 @@ async def send_report(message: types.Message):
     try:
         # Динамическое обновление сообщения
         icons_checking = ["🕐", "🕒", "🕕", "🕘", "🕛"]
-        checking_task = asyncio.create_task(update_message(status_message, "Проверяю наличие", icons_checking, 1))
+        checking_task = asyncio.create_task(update_message(status_message, "Проверяю наличие", icons_checking, 2))
 
         cookies, session = await asyncio.to_thread(get_cookies_and_token)
         file_path = await asyncio.to_thread(fetch_and_save_report, cookies, session)
