@@ -1,20 +1,21 @@
-import asyncio
 import os
-
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 import openpyxl
 from openpyxl.utils import get_column_letter
+import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InputFile
+from aiogram.utils.exceptions import TelegramAPIError
+import logging
 from aiogram.utils.executor import start_polling
+from aiogram.utils.exceptions import TelegramAPIError, MessageNotModified, MessageToEditNotFound, RetryAfter
 
 API_TOKEN = os.getenv('BOT_TOKEN')  # Замените на ваш токен бота
 LOGIN = os.getenv('LOGIN')
 PASSWORD = os.getenv('PASSWORD')
-print(LOGIN)
-print(PASSWORD)
+
 # Инициализация бота и диспетчера
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
@@ -24,6 +25,8 @@ last_message_id = None
 
 
 # Функция для авторизации и получения куки
+# Функция для получения и сохранения отчета
+# Функция для получения и сохранения отчета
 def get_cookies_and_token():
     session = requests.Session()
     url = 'https://office.vilavi.com/'
@@ -45,8 +48,6 @@ def get_cookies_and_token():
     cookies = session.cookies.get_dict()
     return cookies, session
 
-
-# Функция для получения и сохранения отчета
 def fetch_and_save_report(cookies, session):
     url = 'https://store.vilavi.com/ConsignmentStockBalance'
     headers = {
@@ -98,19 +99,33 @@ def fetch_and_save_report(cookies, session):
     else:
         raise Exception(f"Ошибка при выполнении запроса: {response.status_code}")
 
-
 # Динамическое обновление сообщения
 async def update_message(message: types.Message, status: str, icons: list, delay: float):
     i = 0
     while True:
-        await message.edit_text(f"{status} {icons[i % len(icons)]}")
-        await asyncio.sleep(delay)
-        i += 1
+        try:
+            await message.edit_text(f"{status} {icons[i % len(icons)]}")
+            await asyncio.sleep(delay)
+            i += 1
+        except MessageNotModified:
+            continue
+        except MessageToEditNotFound:
+            break
 
+async def send_message_with_retry(chat_id, text, retries=5):
+    for i in range(retries):
+        try:
+            await bot.send_message(chat_id, text)
+            return
+        except TelegramAPIError as e:
+            if 'Bad Gateway' in str(e):
+                logging.warning(f"Attempt {i+1}/{retries} failed with Bad Gateway. Retrying...")
+                await asyncio.sleep(2)  # Delay before retrying
+            else:
+                raise
 
 # Переменная для хранения ID последнего отправленного сообщения с отчетом
 last_report_message_id = None
-
 
 # Хэндлер на команду /stocks
 @dp.message_handler(commands=['stocks'])
@@ -122,26 +137,28 @@ async def send_report(message: types.Message):
     try:
         # Динамическое обновление сообщения
         icons_checking = ["🕐", "🕒", "🕕", "🕘", "🕛"]
-        checking_task = asyncio.create_task(update_message(status_message, "Проверяю наличие", icons_checking, 2))
+        checking_task = asyncio.create_task(update_message(status_message, "Проверяю наличие", icons_checking, 3))
 
         cookies, session = await asyncio.to_thread(get_cookies_and_token)
         file_path = await asyncio.to_thread(fetch_and_save_report, cookies, session)
         checking_task.cancel()
 
-        await status_message.delete()
-        if last_report_message_id:
-            try:
-                await bot.delete_message(message.chat.id, last_report_message_id)
-            except:
-                pass
+        # await status_message.delete()
+        # if last_report_message_id:
+        #     try:
+        #         await bot.delete_message(message.chat.id, last_report_message_id)
+        #     except TelegramAPIError as e:
+        #         logging.error(f"Failed to delete message: {e}")
 
         sent_message = await bot.send_document(message.chat.id, InputFile(file_path), caption="Отчет о наличии")
-        last_report_message_id = sent_message.message_id
+        # last_report_message_id = sent_message.message_id
 
+    except RetryAfter as e:
+        await status_message.edit_text(f"Превышен лимит запросов. Повторите попытку через {e.retry_after} секунд.")
     except Exception as e:
-        await status_message.edit_text(f"Произошла ошибка: {e}")
+        if status_message:
+            await status_message.edit_text(f"Произошла ошибка: {e}")
 
 
-# Запуск бота
 if __name__ == '__main__':
     start_polling(dp, skip_updates=True)
