@@ -143,18 +143,18 @@ async def send_report(message: types.Message):
         file_path = await asyncio.to_thread(fetch_and_save_report, cookies, session)
         checking_task.cancel()
 
-        # await status_message.delete()
-        # if last_report_message_id:
-        #     try:
-        #         await bot.delete_message(message.chat.id, last_report_message_id)
-        #     except TelegramAPIError as e:
-        #         logging.error(f"Failed to delete message: {e}")
+        await status_message.delete()
+        if last_report_message_id:
+            try:
+                await bot.delete_message(message.chat.id, last_report_message_id)
+            except TelegramAPIError as e:
+                logging.error(f"Failed to delete message: {e}")
 
         sent_message = await bot.send_document(message.chat.id, InputFile(file_path), caption="Отчет о наличии")
-        # last_report_message_id = sent_message.message_id
+        last_report_message_id = sent_message.message_id
 
     except RetryAfter as e:
-        await status_message.edit_text(f"Превышен лимит запросов. Повторите попытку через {e.retry_after} секунд.")
+        await status_message.edit_text(f"Превышен лимит запросов. Повторите попытку через 15 секунд.")
     except Exception as e:
         if status_message:
             await status_message.edit_text(f"Произошла ошибка: {e}")
